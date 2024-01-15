@@ -13,7 +13,9 @@ function createElement(type, props, ...children) {
     props: {
       ...props,
       children: children.map((child) => {
-        return typeof child === "string" ? createTextNode(child) : child;
+        const isTextNode =
+          typeof child === "string" || typeof child === "number";
+        return isTextNode ? createTextNode(child) : child;
       }),
     },
   };
@@ -37,26 +39,41 @@ function workLoop(deadline) {
     shouldYield = deadline.timeRemaining() > 0;
   }
   // 问题：用 requestIdleCallback 这个api ，当浏览器没有空闲时间时，渲染中途可能没有空余时间，用户会看到渲染一半的 dom, 解决思路：计算结束后统一添加到页面中。
-  if (!nextWorkUnit && root) { // 如果没有新节点了 说明就代码遍历结束了
+  if (!nextWorkUnit && root) {
+    // 如果没有新节点了 说明就代码遍历结束了
     commitRoot();
   }
   requestIdleCallback(workLoop);
 }
 
 function commitRoot() {
-  console.log('root', root)
+  console.log("root", root);
   commitWork(root.child);
-  root = null
+  root = null;
 }
 
 function commitWork(fiber) {
-  if(!fiber) return
-  fiber.parent.dom.append(fiber.dom);
+  if (!fiber) return;
+  let fiberParent = fiber.parent;
+
+  while (!fiberParent.dom) {
+    // 循环遍历 直到找到 dom 时，用于解决组件嵌套问题
+    fiberParent = fiberParent.parent;
+  }
+  // 只有 fiber.dom存在时 才添加
+  if (fiber.dom) {
+    fiberParent.dom.append(fiber.dom);
+  }
   commitWork(fiber.child);
   commitWork(fiber.sibling);
 }
 
 function createDom(type) {
+  const isFunctionType = typeof type === "function";
+  if (isFunctionType) {
+    console.log(type());
+    return type();
+  }
   return type === "TEXT_ElEMENT"
     ? document.createTextNode("")
     : document.createElement(type);
@@ -70,9 +87,8 @@ function updateProps(props, dom) {
   });
 }
 
-function initChild(fiber) {
+function initChild(fiber, children) {
   let prevChild = null;
-  const children = fiber.props.children;
   children.forEach((child, index) => {
     const newFiber = {
       type: child.type,
@@ -92,23 +108,30 @@ function initChild(fiber) {
 }
 
 function preformWorkOfUnit(fiber) {
-  // 1、创建dom
-  if (!fiber.dom) {
-    let dom = (fiber.dom = createDom(fiber.type));
-
-    // fiber.parent.dom.append(dom);
-    // 2、处理 props
-    updateProps(fiber.props, dom);
+  let isFunctionComponent = typeof fiber.type === "function";
+  if (!isFunctionComponent) {
+    // 1、创建dom
+    if (!fiber.dom) {
+      let dom = (fiber.dom = createDom(fiber.type));
+      // 2、处理 props
+      updateProps(fiber.props, dom);
+    }
   }
-  // 3、转换链表 设置指针
-  initChild(fiber);
+  console.log(fiber, fiber.type);
+  // 3、转换链表 设置指针 处理FunctionComponent
+  const children = isFunctionComponent
+    ? [fiber.type(fiber.props)]
+    : fiber.props.children;
+  initChild(fiber, children);
   // 4、返回下一个要执行的任务
   if (fiber.child) {
     return fiber.child;
-  } else if (fiber.sibling) {
-    return fiber.sibling;
   } else {
-    return fiber.parent?.sibling;
+    let nextFiber = fiber;
+    while (nextFiber) {
+      if (nextFiber.sibling) return nextFiber.sibling;
+      nextFiber = nextFiber.parent;
+    }
   }
 }
 

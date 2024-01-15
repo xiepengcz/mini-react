@@ -107,22 +107,31 @@ function initChild(fiber, children) {
   });
 }
 
+function updateFunctionComponent(fiber) {
+  const children = [fiber.type(fiber.props)];
+  // 3、转换链表 设置指针 处理FunctionComponent
+  initChild(fiber, children);
+}
+
+function updateHostComponent(fiber) {
+  if (!fiber.dom) {
+    // 1、创建dom
+    let dom = (fiber.dom = createDom(fiber.type));
+    // 2、处理 props
+    updateProps(fiber.props, dom);
+  }
+  const children = fiber.props.children;
+  // 3、转换链表 设置指针 处理FunctionComponent
+  initChild(fiber, children);
+}
+
 function preformWorkOfUnit(fiber) {
   let isFunctionComponent = typeof fiber.type === "function";
   if (!isFunctionComponent) {
-    // 1、创建dom
-    if (!fiber.dom) {
-      let dom = (fiber.dom = createDom(fiber.type));
-      // 2、处理 props
-      updateProps(fiber.props, dom);
-    }
+    updateHostComponent(fiber);
+  } else {
+    updateFunctionComponent(fiber);
   }
-  console.log(fiber, fiber.type);
-  // 3、转换链表 设置指针 处理FunctionComponent
-  const children = isFunctionComponent
-    ? [fiber.type(fiber.props)]
-    : fiber.props.children;
-  initChild(fiber, children);
   // 4、返回下一个要执行的任务
   if (fiber.child) {
     return fiber.child;

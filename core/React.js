@@ -25,21 +25,9 @@ function render(el, container) {
       children: [el],
     },
   };
-  // let dom =
-  //   el.type === "TEXT_ElEMENT"
-  //     ? document.createTextNode("")
-  //     : document.createElement(el.type);
-  // Object.keys(el.props).forEach((key) => {
-  //   if (key !== "children") {
-  //     dom[key] = el.props[key];
-  //   }
-  // });
-  // el.props.children.forEach((child) => {
-  //   render(child, dom);
-  // });
-  // container.append(dom);
+  root = nextWorkUnit;
 }
-
+let root = null;
 let nextWorkUnit = null;
 function workLoop(deadline) {
   let shouldYield = false;
@@ -48,7 +36,24 @@ function workLoop(deadline) {
     nextWorkUnit = preformWorkOfUnit(nextWorkUnit);
     shouldYield = deadline.timeRemaining() > 0;
   }
+  // 问题：用 requestIdleCallback 这个api ，当浏览器没有空闲时间时，渲染中途可能没有空余时间，用户会看到渲染一半的 dom, 解决思路：计算结束后统一添加到页面中。
+  if (!nextWorkUnit && root) { // 如果没有新节点了 说明就代码遍历结束了
+    commitRoot();
+  }
   requestIdleCallback(workLoop);
+}
+
+function commitRoot() {
+  console.log('root', root)
+  commitWork(root.child);
+  root = null
+}
+
+function commitWork(fiber) {
+  if(!fiber) return
+  fiber.parent.dom.append(fiber.dom);
+  commitWork(fiber.child);
+  commitWork(fiber.sibling);
 }
 
 function createDom(type) {
@@ -91,7 +96,7 @@ function preformWorkOfUnit(fiber) {
   if (!fiber.dom) {
     let dom = (fiber.dom = createDom(fiber.type));
 
-    fiber.parent.dom.append(dom);
+    // fiber.parent.dom.append(dom);
     // 2、处理 props
     updateProps(fiber.props, dom);
   }

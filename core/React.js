@@ -27,9 +27,12 @@ function render(el, container) {
       children: [el],
     },
   };
-  root = nextWorkUnit;
+  wipRoot = nextWorkUnit;
 }
-let root = null;
+
+let currentRoot = null;
+// work in progress
+let wipRoot = null;
 let nextWorkUnit = null;
 function workLoop(deadline) {
   let shouldYield = false;
@@ -39,7 +42,7 @@ function workLoop(deadline) {
     shouldYield = deadline.timeRemaining() > 0;
   }
   // 问题：用 requestIdleCallback 这个api ，当浏览器没有空闲时间时，渲染中途可能没有空余时间，用户会看到渲染一半的 dom, 解决思路：计算结束后统一添加到页面中。
-  if (!nextWorkUnit && root) {
+  if (!nextWorkUnit && wipRoot) {
     // 如果没有新节点了 说明就代码遍历结束了
     commitRoot();
   }
@@ -47,12 +50,14 @@ function workLoop(deadline) {
 }
 
 function commitRoot() {
-  console.log("root", root);
-  commitWork(root.child);
-  root = null;
+  console.log("root", wipRoot);
+  commitWork(wipRoot.child);
+  currentRoot = wipRoot;
+  wipRoot = null;
 }
 
 function commitWork(fiber) {
+  console.log("fiber", fiber);
   if (!fiber) return;
   let fiberParent = fiber.parent;
 
@@ -60,9 +65,13 @@ function commitWork(fiber) {
     // 循环遍历 直到找到 dom 时，用于解决组件嵌套问题
     fiberParent = fiberParent.parent;
   }
-  // 只有 fiber.dom存在时 才添加
-  if (fiber.dom) {
-    fiberParent.dom.append(fiber.dom);
+  if (fiber.effectTag === "update") {
+    updateProps(fiber.dom, fiber.props, fiber.alternate?.props);
+  } else if (fiber.effectTag === "placement") {
+    // 只有 fiber.dom存在时 才添加
+    if (fiber.dom) {
+      fiberParent.dom.append(fiber.dom);
+    }
   }
   commitWork(fiber.child);
   commitWork(fiber.sibling);
@@ -79,25 +88,61 @@ function createDom(type) {
     : document.createElement(type);
 }
 
-function updateProps(props, dom) {
-  Object.keys(props).forEach((key) => {
-    if (key !== "children") {
-      dom[key] = props[key];
+function updateProps(dom, nextProps, prevProps) {
+  // 1、old 有 ，new 没有
+  // 2、new 有，old 没有
+  // 3、new 有 old 有 修改
+  Object.keys(prevProps).forEach((key) => {
+    if (!(key in nextProps) && key !== "children") {
+      dom.removeAttribute(key);
+    }
+  });
+  Object.keys(nextProps).forEach((key) => {
+    if (key !== "children" && nextProps[key] !== prevProps[key]) {
+      if (key.startsWith("on")) {
+        dom.removeEventListener(
+          key.slice(2).toLocaleLowerCase(),
+          prevProps[key]
+        );
+        dom.addEventListener(key.slice(2).toLocaleLowerCase(), nextProps[key]);
+      } else {
+        dom[key] = nextProps[key];
+      }
     }
   });
 }
 
-function initChild(fiber, children) {
+function reconcileChildren(fiber, children) {
   let prevChild = null;
+  let oldFiber = fiber.alternate?.child;
   children.forEach((child, index) => {
-    const newFiber = {
-      type: child.type,
-      props: child.props,
-      child: null,
-      parent: fiber,
-      sibling: null,
-      dom: null,
-    };
+    const isSameType = oldFiber && oldFiber.type === child.type;
+    let newFiber;
+    if (isSameType) {
+      newFiber = {
+        type: child.type,
+        props: child.props,
+        child: null,
+        parent: fiber,
+        sibling: null,
+        dom: oldFiber.dom,
+        alternate: oldFiber,
+        effectTag: "update",
+      };
+    } else {
+      newFiber = {
+        type: child.type,
+        props: child.props,
+        child: null,
+        parent: fiber,
+        sibling: null,
+        dom: null,
+        effectTag: "placement",
+      };
+    }
+    if (oldFiber) {
+      oldFiber = oldFiber.sibling;
+    }
     if (index === 0) {
       fiber.child = newFiber;
     } else {
@@ -110,7 +155,7 @@ function initChild(fiber, children) {
 function updateFunctionComponent(fiber) {
   const children = [fiber.type(fiber.props)];
   // 3、转换链表 设置指针 处理FunctionComponent
-  initChild(fiber, children);
+  reconcileChildren(fiber, children);
 }
 
 function updateHostComponent(fiber) {
@@ -118,11 +163,12 @@ function updateHostComponent(fiber) {
     // 1、创建dom
     let dom = (fiber.dom = createDom(fiber.type));
     // 2、处理 props
-    updateProps(fiber.props, dom);
+    updateProps(dom, fiber.props, {});
   }
+
   const children = fiber.props.children;
   // 3、转换链表 设置指针 处理FunctionComponent
-  initChild(fiber, children);
+  reconcileChildren(fiber, children);
 }
 
 function preformWorkOfUnit(fiber) {
@@ -144,9 +190,19 @@ function preformWorkOfUnit(fiber) {
   }
 }
 
+function update() {
+  nextWorkUnit = {
+    dom: currentRoot.dom,
+    props: currentRoot.props,
+    alternate: currentRoot,
+  };
+  wipRoot = nextWorkUnit;
+}
+
 requestIdleCallback(workLoop);
 
 export default {
   render,
+  update,
   createElement,
 };
